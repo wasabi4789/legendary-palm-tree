@@ -71,7 +71,7 @@ Sub CollectDataFromFolder()
                                     destRow = wsDest.Cells(wsDest.Rows.Count, 1).End(xlUp).Row + 1
                                 End If
 
-                                ' Безопасная вставка строк с обработкой объединённых ячеек
+                                ' Безопасная вставка с обработкой объединённых ячеек
                                 SafeInsertAndPaste wsDest, destRow, numRows, rngCopy
                             End If
                         End If
@@ -111,48 +111,74 @@ Private Function FindDoctorRow(ws As Worksheet) As Range
     Set FindDoctorRow = Nothing
 End Function
 
-' Процедура безопасной вставки строк с восстановлением объединений
+' Версия, работающая во всех версиях Excel (без MergeAreas)
 Private Sub SafeInsertAndPaste(wsDest As Worksheet, destRow As Long, numRows As Long, rngCopy As Range)
-    Dim mergedAreas As Object ' Dictionary для хранения адресов объединений
-    Dim ma As Range
+    Dim mergedDict As Object  ' Dictionary для хранения адресов объединений
+    Dim cell As Range
     Dim addr As String
-    Dim newAddr As String
-    Dim mergedAbove As Range
+    Dim ma As Range
     Dim i As Long
+    Dim rng As Range
 
-    ' 1. Сохраняем все объединённые ячейки на листе и снимаем их
-    Set mergedAreas = CreateObject("Scripting.Dictionary")
-    For Each ma In wsDest.UsedRange.MergeAreas
-        addr = ma.Address(False, False)
-        ' Пропускаем объединения, которые пересекают границу destRow (начало < destRow <= конец)
-        ' Их мы восстановить не сможем, поэтому разъединим без сохранения
-        If ma.Row + ma.Rows.Count - 1 < destRow Or ma.Row >= destRow Then
-            mergedAreas.Add addr, ma.Row ' сохраняем адрес и исходную первую строку
+    ' 1. Сбор всех уникальных объединённых диапазонов на листе
+    Set mergedDict = CreateObject("Scripting.Dictionary")
+    On Error Resume Next
+    For Each cell In wsDest.UsedRange
+        If cell.MergeCells Then
+            addr = cell.MergeArea.Address(False, False)
+            If Not mergedDict.Exists(addr) Then
+                mergedDict.Add addr, cell.MergeArea.Row  ' запоминаем исходную строку начала
+            End If
         End If
-        ma.UnMerge
-    Next ma
+    Next cell
+    On Error GoTo 0
 
-    ' 2. Вставляем пустые строки над destRow (теперь конфликтов быть не должно)
+    ' 2. Снимаем объединения (кроме тех, что пересекают destRow)
+    Dim keysToRemove As Object
+    Set keysToRemove = CreateObject("Scripting.Dictionary")
+    Dim key As Variant
+    For Each key In mergedDict.Keys
+        Set ma = wsDest.Range(CStr(key))
+        ' Если диапазон пересекает линию вставки (начало < destRow <= конец), пропускаем
+        If ma.Row + ma.Rows.Count - 1 < destRow Or ma.Row >= destRow Then
+            ' Сохраним для восстановления
+            ma.UnMerge
+        Else
+            ' Такой диапазон мы не сможем корректно восстановить, поэтому просто снимаем без сохранения
+            ma.UnMerge
+            keysToRemove.Add key, True   ' удалим из словаря позже
+        End If
+    Next key
+    ' Удаляем из словаря те, что мы не будем восстанавливать
+    For Each key In keysToRemove.Keys
+        mergedDict.Remove key
+    Next key
+
+    ' 3. Вставляем пустые строки перед destRow (теперь ошибок не будет)
     wsDest.Rows(destRow).Resize(numRows).Insert Shift:=xlDown, CopyOrigin:=xlFormatFromLeftOrAbove
 
-    ' 3. Вставляем скопированные данные на место новых строк (без вставки строк)
+    ' 4. Копируем данные из исходного диапазона
     rngCopy.Copy
     wsDest.Cells(destRow, 1).PasteSpecial Paste:=xlPasteAll, Operation:=xlNone, SkipBlanks:=False, Transpose:=False
     Application.CutCopyMode = False
 
-    ' 4. Восстанавливаем объединения с учётом сдвига
-    Dim key As Variant
-    For Each key In mergedAreas.Keys
-        ' Исходный диапазон
-        Set ma = wsDest.Range(CStr(key))
-        ' Определяем сдвиг: если диапазон был ниже или равен destRow, сдвигаем на numRows
-        If CLng(mergedAreas(key)) >= destRow Then
+    ' 5. Восстанавливаем объединения с учётом сдвига
+    Dim newAddr As String
+    For Each key In mergedDict.Keys
+        Set ma = wsDest.Range(CStr(key)) ' адрес уже изменился из-за вставки, но сам диапазон пока существует?
+        ' После вставки строк адрес объединения сдвинулся, но исходный key – это старый адрес, который уже не актуален.
+        ' Нужно восстановить диапазон с теми же относительными координатами, но с учётом сдвига, если исходный диапазон был ниже destRow.
+        ' Исходная строка начала сохранена в mergedDict(key).
+        Dim origRow As Long
+        origRow = CLng(mergedDict(key))
+        If origRow >= destRow Then
+            ' Сдвиг вниз на numRows
             newAddr = wsDest.Range( _
-                wsDest.Cells(ma.Row + numRows, ma.Column), _
-                wsDest.Cells(ma.Row + ma.Rows.Count - 1 + numRows, ma.Column + ma.Columns.Count - 1) _
+                wsDest.Cells(origRow + numRows, ma.Column), _
+                wsDest.Cells(origRow + ma.Rows.Count - 1 + numRows, ma.Column + ma.Columns.Count - 1) _
             ).Address(False, False)
         Else
-            newAddr = key ' без изменений
+            newAddr = key  ' без изменений
         End If
         On Error Resume Next
         wsDest.Range(newAddr).Merge
