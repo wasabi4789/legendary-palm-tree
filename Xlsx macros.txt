@@ -1,187 +1,112 @@
-Option Explicit
-
-Sub CollectDataFromFolder()
-    Dim wbThis As Workbook
-    Dim wsNames As Variant
-    Dim folderPath As String
-    Dim fileName As String
-    Dim wbSrc As Workbook
-    Dim wsSrc As Worksheet, wsDest As Worksheet
-    Dim destRow As Long
-    Dim srcLastDataRow As Long
-    Dim rngCopy As Range
-    Dim i As Long
-    Dim foundCell As Range
-    Dim lastCol As Long
-    Dim numRows As Long
-
-    Application.ScreenUpdating = False
-    Application.EnableEvents = False
-    Application.Calculation = xlCalculationManual
-
-    Set wbThis = ThisWorkbook
-
-    If wbThis.Path = "" Then
-        MsgBox "Пожалуйста, сохраните книгу перед запуском макроса.", vbExclamation, "Ошибка"
-        GoTo CleanUp
+Sub MergeDataFromFiles()
+    Dim SourcePath As String
+    Dim SourceFile As String
+    Dim TargetWB As Workbook
+    Dim SourceWB As Workbook
+    Dim wsTarget As Worksheet
+    Dim wsSource As Worksheet
+    Dim SheetNames As Variant
+    Dim i As Integer
+    Dim LastRowTarget As Long
+    Dim TargetRow As Long
+    Dim LastCol As Long
+    Dim SourceData As Variant
+    Dim rngTarget As Range
+    
+    ' Текущая книга (принимающая данные)
+    Set TargetWB = ThisWorkbook
+    SourcePath = TargetWB.Path & "\"
+    
+    ' Проверка, сохранена ли книга
+    If SourcePath = "\" Then
+        MsgBox "Книга не сохранена. Сначала сохраните файл.", vbExclamation
+        Exit Sub
     End If
-
-    folderPath = wbThis.Path & Application.PathSeparator
-    wsNames = Array("2024", "2025", "1 кв 2026")
-
-    fileName = Dir(folderPath & "*.xlsx")
-
-    Do While fileName <> ""
-        If StrComp(folderPath & fileName, wbThis.FullName, vbTextCompare) <> 0 Then
+    
+    ' Список листов для обработки
+    SheetNames = Array("2024", "2025", "1 кв 2026")
+    
+    ' Отключаем обновление экрана и автоматические пересчёты для ускорения
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.EnableEvents = False
+    
+    ' Находим первый файл .xlsx в папке
+    SourceFile = Dir(SourcePath & "*.xlsx")
+    
+    Do While SourceFile <> ""
+        ' Пропускаем текущий файл, чтобы не обрабатывать его самого
+        If SourceFile <> TargetWB.Name Then
+            ' Открываем исходный файл только для чтения
             On Error Resume Next
-            Set wbSrc = Workbooks.Open(folderPath & fileName, ReadOnly:=True, UpdateLinks:=0)
+            Set SourceWB = Workbooks.Open(SourcePath & SourceFile, ReadOnly:=True, UpdateLinks:=False)
             On Error GoTo 0
-
-            If Not wbSrc Is Nothing Then
-                For i = LBound(wsNames) To UBound(wsNames)
-                    Set wsSrc = Nothing
+            
+            If Not SourceWB Is Nothing Then
+                ' Обрабатываем каждый лист из списка
+                For i = LBound(SheetNames) To UBound(SheetNames)
+                    ' Проверяем наличие листа в исходной книге
                     On Error Resume Next
-                    Set wsSrc = wbSrc.Worksheets(CStr(wsNames(i)))
+                    Set wsSource = SourceWB.Worksheets(SheetNames(i))
                     On Error GoTo 0
-
-                    If Not wsSrc Is Nothing Then
-                        Set foundCell = FindDoctorRow(wsSrc)
-                        If Not foundCell Is Nothing Then
-                            srcLastDataRow = foundCell.Row - 1
-                        Else
-                            srcLastDataRow = wsSrc.Cells(wsSrc.Rows.Count, 1).End(xlUp).Row
-                        End If
-
-                        If srcLastDataRow >= 7 Then
-                            lastCol = wsSrc.Cells(6, wsSrc.Columns.Count).End(xlToLeft).Column
-                            If lastCol < 1 Then lastCol = 1
-
-                            Set rngCopy = wsSrc.Range(wsSrc.Cells(7, 1), wsSrc.Cells(srcLastDataRow, lastCol))
-                            numRows = rngCopy.Rows.Count
-
+                    
+                    If Not wsSource Is Nothing Then
+                        ' Проверяем наличие листа в целевой книге
+                        On Error Resume Next
+                        Set wsTarget = TargetWB.Worksheets(SheetNames(i))
+                        On Error GoTo 0
+                        
+                        If Not wsTarget Is Nothing Then
+                            ' Определяем последний используемый столбец по 7-й строке (шапка)
+                            LastCol = wsSource.Cells(7, wsSource.Columns.Count).End(xlToLeft).Column
+                            If LastCol < 1 Then LastCol = 1
+                            
+                            ' Копируем значения из диапазона A7:LastCol10 в массив
+                            SourceData = wsSource.Range(wsSource.Cells(7, 1), wsSource.Cells(10, LastCol)).Value
+                            
+                            ' Находим последнюю непустую строку в целевом листе (по всем столбцам)
                             On Error Resume Next
-                            Set wsDest = wbThis.Worksheets(CStr(wsNames(i)))
+                            LastRowTarget = wsTarget.Cells.Find(What:="*", _
+                                After:=wsTarget.Cells(1, 1), _
+                                LookIn:=xlValues, _
+                                LookAt:=xlPart, _
+                                SearchOrder:=xlByRows, _
+                                SearchDirection:=xlPrevious).Row
                             On Error GoTo 0
-
-                            If Not wsDest Is Nothing Then
-                                Set foundCell = FindDoctorRow(wsDest)
-                                If Not foundCell Is Nothing Then
-                                    destRow = foundCell.Row
-                                Else
-                                    destRow = wsDest.Cells(wsDest.Rows.Count, 1).End(xlUp).Row + 1
-                                End If
-
-                                ' Безопасная вставка с обработкой объединённых ячеек
-                                SafeInsertAndPaste wsDest, destRow, numRows, rngCopy
+                            
+                            ' Если лист пуст или только шапка, считаем последней строкой 6
+                            If LastRowTarget = 0 Then LastRowTarget = 6
+                            If LastRowTarget < 7 Then LastRowTarget = 6
+                            
+                            ' Определяем строку для вставки: после 13-й строки
+                            If LastRowTarget < 13 Then
+                                TargetRow = 14
+                            Else
+                                TargetRow = LastRowTarget + 1
                             End If
+                            
+                            ' Вставляем значения в целевой лист
+                            Set rngTarget = wsTarget.Cells(TargetRow, 1).Resize(4, LastCol)
+                            rngTarget.Value = SourceData
                         End If
+                        Set wsTarget = Nothing
                     End If
+                    Set wsSource = Nothing
                 Next i
-                wbSrc.Close SaveChanges:=False
-                Set wbSrc = Nothing
+                
+                ' Закрываем исходную книгу без сохранения
+                SourceWB.Close SaveChanges:=False
+                Set SourceWB = Nothing
             End If
         End If
-        fileName = Dir()
+        ' Переходим к следующему файлу
+        SourceFile = Dir
     Loop
-
-    MsgBox "Данные успешно собраны!", vbInformation, "Готово"
-
-CleanUp:
+    
+    ' Восстанавливаем настройки Excel
     Application.ScreenUpdating = True
-    Application.EnableEvents = True
     Application.Calculation = xlCalculationAutomatic
-End Sub
-
-Private Function FindDoctorRow(ws As Worksheet) As Range
-    Dim r As Range
-    Dim lastRow As Long
-    Dim lastCol As Long
-
-    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
-    If lastRow < 7 Then lastRow = 7
-    lastCol = ws.Cells(6, ws.Columns.Count).End(xlToLeft).Column
-    If lastCol < 1 Then lastCol = 1
-
-    For Each r In ws.Range(ws.Cells(7, 1), ws.Cells(lastRow, lastCol))
-        If InStr(1, r.Text, "Главный врач", vbTextCompare) > 0 Then
-            Set FindDoctorRow = ws.Rows(r.Row)
-            Exit Function
-        End If
-    Next r
-    Set FindDoctorRow = Nothing
-End Function
-
-' Версия, работающая во всех версиях Excel (без MergeAreas)
-Private Sub SafeInsertAndPaste(wsDest As Worksheet, destRow As Long, numRows As Long, rngCopy As Range)
-    Dim mergedDict As Object  ' Dictionary для хранения адресов объединений
-    Dim cell As Range
-    Dim addr As String
-    Dim ma As Range
-    Dim i As Long
-    Dim rng As Range
-
-    ' 1. Сбор всех уникальных объединённых диапазонов на листе
-    Set mergedDict = CreateObject("Scripting.Dictionary")
-    On Error Resume Next
-    For Each cell In wsDest.UsedRange
-        If cell.MergeCells Then
-            addr = cell.MergeArea.Address(False, False)
-            If Not mergedDict.Exists(addr) Then
-                mergedDict.Add addr, cell.MergeArea.Row  ' запоминаем исходную строку начала
-            End If
-        End If
-    Next cell
-    On Error GoTo 0
-
-    ' 2. Снимаем объединения (кроме тех, что пересекают destRow)
-    Dim keysToRemove As Object
-    Set keysToRemove = CreateObject("Scripting.Dictionary")
-    Dim key As Variant
-    For Each key In mergedDict.Keys
-        Set ma = wsDest.Range(CStr(key))
-        ' Если диапазон пересекает линию вставки (начало < destRow <= конец), пропускаем
-        If ma.Row + ma.Rows.Count - 1 < destRow Or ma.Row >= destRow Then
-            ' Сохраним для восстановления
-            ma.UnMerge
-        Else
-            ' Такой диапазон мы не сможем корректно восстановить, поэтому просто снимаем без сохранения
-            ma.UnMerge
-            keysToRemove.Add key, True   ' удалим из словаря позже
-        End If
-    Next key
-    ' Удаляем из словаря те, что мы не будем восстанавливать
-    For Each key In keysToRemove.Keys
-        mergedDict.Remove key
-    Next key
-
-    ' 3. Вставляем пустые строки перед destRow (теперь ошибок не будет)
-    wsDest.Rows(destRow).Resize(numRows).Insert Shift:=xlDown, CopyOrigin:=xlFormatFromLeftOrAbove
-
-    ' 4. Копируем данные из исходного диапазона
-    rngCopy.Copy
-    wsDest.Cells(destRow, 1).PasteSpecial Paste:=xlPasteAll, Operation:=xlNone, SkipBlanks:=False, Transpose:=False
-    Application.CutCopyMode = False
-
-    ' 5. Восстанавливаем объединения с учётом сдвига
-    Dim newAddr As String
-    For Each key In mergedDict.Keys
-        Set ma = wsDest.Range(CStr(key)) ' адрес уже изменился из-за вставки, но сам диапазон пока существует?
-        ' После вставки строк адрес объединения сдвинулся, но исходный key – это старый адрес, который уже не актуален.
-        ' Нужно восстановить диапазон с теми же относительными координатами, но с учётом сдвига, если исходный диапазон был ниже destRow.
-        ' Исходная строка начала сохранена в mergedDict(key).
-        Dim origRow As Long
-        origRow = CLng(mergedDict(key))
-        If origRow >= destRow Then
-            ' Сдвиг вниз на numRows
-            newAddr = wsDest.Range( _
-                wsDest.Cells(origRow + numRows, ma.Column), _
-                wsDest.Cells(origRow + ma.Rows.Count - 1 + numRows, ma.Column + ma.Columns.Count - 1) _
-            ).Address(False, False)
-        Else
-            newAddr = key  ' без изменений
-        End If
-        On Error Resume Next
-        wsDest.Range(newAddr).Merge
-        On Error GoTo 0
-    Next key
+    Application.EnableEvents = True
+    
+    MsgBox "Обработка завершена. Данные добавлены в листы 2024, 2025 и 1 кв 2026.", vbInformation
 End Sub
