@@ -9,9 +9,7 @@ Sub MergeDataFromFiles()
     Dim i As Integer
     Dim LastRowTarget As Long
     Dim TargetRow As Long
-    Dim LastCol As Long
-    Dim SourceData As Variant
-    Dim rngTarget As Range
+    Const ColCount As Integer = 19   ' Явно указано 19 столбцов
     
     ' Текущая книга (принимающая данные)
     Set TargetWB = ThisWorkbook
@@ -26,7 +24,7 @@ Sub MergeDataFromFiles()
     ' Список листов для обработки
     SheetNames = Array("2024", "2025", "1 кв 2026")
     
-    ' Отключаем обновление экрана и автоматические пересчёты для ускорения
+    ' Отключаем обновление экрана и автоматические пересчёты
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.EnableEvents = False
@@ -35,7 +33,7 @@ Sub MergeDataFromFiles()
     SourceFile = Dir(SourcePath & "*.xlsx")
     
     Do While SourceFile <> ""
-        ' Пропускаем текущий файл, чтобы не обрабатывать его самого
+        ' Пропускаем текущий файл
         If SourceFile <> TargetWB.Name Then
             ' Открываем исходный файл только для чтения
             On Error Resume Next
@@ -57,12 +55,9 @@ Sub MergeDataFromFiles()
                         On Error GoTo 0
                         
                         If Not wsTarget Is Nothing Then
-                            ' Определяем последний используемый столбец по 7-й строке (шапка)
-                            LastCol = wsSource.Cells(7, wsSource.Columns.Count).End(xlToLeft).Column
-                            If LastCol < 1 Then LastCol = 1
-                            
-                            ' Копируем значения из диапазона A7:LastCol10 в массив
-                            SourceData = wsSource.Range(wsSource.Cells(7, 1), wsSource.Cells(10, LastCol)).Value
+                            ' Копируем значения из диапазона A7:S10 (строки 7-10, столбцы 1-19)
+                            Dim SourceData As Variant
+                            SourceData = wsSource.Range(wsSource.Cells(7, 1), wsSource.Cells(10, ColCount)).Value
                             
                             ' Находим последнюю непустую строку в целевом листе (по всем столбцам)
                             On Error Resume Next
@@ -85,9 +80,8 @@ Sub MergeDataFromFiles()
                                 TargetRow = LastRowTarget + 1
                             End If
                             
-                            ' Вставляем значения в целевой лист
-                            Set rngTarget = wsTarget.Cells(TargetRow, 1).Resize(4, LastCol)
-                            rngTarget.Value = SourceData
+                            ' Вставляем значения в целевой лист (4 строки × 19 столбцов)
+                            wsTarget.Cells(TargetRow, 1).Resize(4, ColCount).Value = SourceData
                         End If
                         Set wsTarget = Nothing
                     End If
