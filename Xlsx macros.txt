@@ -1,0 +1,137 @@
+Option Explicit
+
+Sub CollectDataFromFolder()
+    Dim wbThis As Workbook
+    Dim wsNames As Variant
+    Dim folderPath As String
+    Dim fileName As String
+    Dim wbSrc As Workbook
+    Dim wsSrc As Worksheet, wsDest As Worksheet
+    Dim destRow As Long
+    Dim srcLastDataRow As Long
+    Dim rngCopy As Range
+    Dim i As Long
+    Dim searchRow As Range
+    Dim foundCell As Range
+    Dim lastCol As Long
+
+    ' Отключаем обновление экрана и события для скорости
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    Set wbThis = ThisWorkbook
+
+    ' Проверяем, сохранена ли книга
+    If wbThis.Path = "" Then
+        MsgBox "Пожалуйста, сохраните книгу перед запуском макроса.", vbExclamation, "Ошибка"
+        GoTo CleanUp
+    End If
+
+    ' Папка, в которой лежит эта книга
+    folderPath = wbThis.Path & Application.PathSeparator
+    ' Имена обрабатываемых листов
+    wsNames = Array("2024", "2025", "1 кв 2026")
+
+    ' Получаем первый .xlsx файл в папке
+    fileName = Dir(folderPath & "*.xlsx")
+
+    ' Перебираем все .xlsx файлы в папке
+    Do While fileName <> ""
+        ' Пропускаем саму книгу с макросом, если она .xlsm (или вдруг .xlsx)
+        If StrComp(folderPath & fileName, wbThis.FullName, vbTextCompare) <> 0 Then
+            ' Открываем исходную книгу только для чтения
+            On Error Resume Next
+            Set wbSrc = Workbooks.Open(folderPath & fileName, ReadOnly:=True, UpdateLinks:=0)
+            On Error GoTo 0
+
+            If Not wbSrc Is Nothing Then
+                ' Обрабатываем каждый из трёх листов
+                For i = LBound(wsNames) To UBound(wsNames)
+                    Set wsSrc = Nothing
+                    On Error Resume Next
+                    Set wsSrc = wbSrc.Worksheets(CStr(wsNames(i)))
+                    On Error GoTo 0
+
+                    If Not wsSrc Is Nothing Then
+                        ' Ищем строку "Главный врач" на листе-источнике
+                        Set foundCell = FindDoctorRow(wsSrc)
+                        If Not foundCell Is Nothing Then
+                            srcLastDataRow = foundCell.Row - 1
+                        Else
+                            ' Если не найдено — берём все строки до конца данных (на всякий случай)
+                            srcLastDataRow = wsSrc.Cells(wsSrc.Rows.Count, 1).End(xlUp).Row
+                        End If
+
+                        ' Если данных после шапки нет (меньше 7 строки), пропускаем
+                        If srcLastDataRow >= 7 Then
+                            ' Определяем последний используемый столбец в данных, чтобы не копировать всю строку целиком
+                            lastCol = wsSrc.Cells(6, wsSrc.Columns.Count).End(xlToLeft).Column
+                            If lastCol < 1 Then lastCol = 1
+
+                            ' Копируемый диапазон: с 7-й строки до последней строки данных
+                            Set rngCopy = wsSrc.Range(wsSrc.Cells(7, 1), wsSrc.Cells(srcLastDataRow, lastCol))
+
+                            ' Находим лист-приёмник в нашей книге
+                            On Error Resume Next
+                            Set wsDest = wbThis.Worksheets(CStr(wsNames(i)))
+                            On Error GoTo 0
+
+                            If Not wsDest Is Nothing Then
+                                ' Ищем строку "Главный врач" на листе-приёмнике
+                                Set foundCell = FindDoctorRow(wsDest)
+                                If Not foundCell Is Nothing Then
+                                    destRow = foundCell.Row
+                                Else
+                                    ' Если нет — вставляем после последней использованной строки
+                                    destRow = wsDest.Cells(wsDest.Rows.Count, 1).End(xlUp).Row + 1
+                                End If
+
+                                ' Вставляем скопированные строки над строкой "Главный врач"
+                                rngCopy.Copy
+                                wsDest.Rows(destRow).Insert Shift:=xlDown, CopyOrigin:=xlFormatFromLeftOrAbove
+                                ' Если вставляли перед строкой "Главный врач", то данные появятся прямо над ней
+                            End If
+                        End If
+                    End If
+                Next i
+
+                ' Закрываем исходную книгу без сохранения
+                wbSrc.Close SaveChanges:=False
+                Set wbSrc = Nothing
+            End If
+        End If
+        fileName = Dir() ' следующий файл
+    Loop
+
+    MsgBox "Данные успешно собраны!", vbInformation, "Готово"
+
+CleanUp:
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub
+
+' Функция поиска строки, в которой есть ячейка со значением "Главный врач"
+Private Function FindDoctorRow(ws As Worksheet) As Range
+    Dim searchRange As Range
+    Dim r As Range
+    Dim lastRow As Long
+    Dim lastCol As Long
+    Dim col As Long
+
+    lastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+    If lastRow < 7 Then lastRow = 7
+    lastCol = ws.Cells(6, ws.Columns.Count).End(xlToLeft).Column
+    If lastCol < 1 Then lastCol = 1
+
+    ' Ищем во всех ячейках, начиная с 7-й строки
+    For Each r In ws.Range(ws.Cells(7, 1), ws.Cells(lastRow, lastCol))
+        If InStr(1, r.Text, "Главный врач", vbTextCompare) > 0 Then
+            Set FindDoctorRow = ws.Rows(r.Row)
+            Exit Function
+        End If
+    Next r
+    ' Если не нашли — возвращаем Nothing
+    Set FindDoctorRow = Nothing
+End Function
