@@ -1,0 +1,136 @@
+Sub MergeDataFromFiles()
+    Dim SourcePath As String
+    Dim SourceFile As String
+    Dim TargetWB As Workbook
+    Dim SourceWB As Workbook
+    Dim wsTarget As Worksheet
+    Dim wsSource As Worksheet
+    Dim LastRowSource As Long
+    Dim LastRowTarget As Long
+    Dim TargetRow As Long
+    Dim SourceData As Variant
+    Dim i As Long, r As Long, c As Long
+    Const ColCount As Integer = 19
+    
+    ' Текущая книга (принимающая данные)
+    Set TargetWB = ThisWorkbook
+    SourcePath = TargetWB.Path & "\"
+    
+    ' Проверка, сохранена ли книга
+    If SourcePath = "\" Then
+        MsgBox "Книга не сохранена. Сначала сохраните файл.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Целевой лист
+    Set wsTarget = TargetWB.Worksheets("Лист1")
+    
+    ' Отключаем обновление экрана и автоматические пересчёты
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.EnableEvents = False
+    
+    ' Находим первый файл .xlsx в папке
+    SourceFile = Dir(SourcePath & "*.xlsx")
+    
+    Do While SourceFile <> ""
+        ' Пропускаем текущий файл
+        If SourceFile <> TargetWB.Name Then
+            ' Открываем исходный файл только для чтения
+            On Error Resume Next
+            Set SourceWB = Workbooks.Open(SourcePath & SourceFile, ReadOnly:=True, UpdateLinks:=False)
+            On Error GoTo 0
+            
+            If Not SourceWB Is Nothing Then
+                ' Проверяем наличие листа "Лист1" в исходной книге
+                On Error Resume Next
+                Set wsSource = SourceWB.Worksheets("Лист1")
+                On Error GoTo 0
+                
+                If Not wsSource Is Nothing Then
+                    ' Разъединяем все объединённые ячейки на исходном листе
+                    If wsSource.UsedRange.MergeCells Then
+                        wsSource.Cells.UnMerge
+                    End If
+                    
+                    ' Проверяем наличие первого столбца с нужным заголовком
+                    Dim HeaderValue As String
+                    On Error Resume Next
+                    HeaderValue = wsSource.Cells(1, 1).Value
+                    On Error GoTo 0
+                    
+                    If HeaderValue <> "Полное наименование медицинской организации" Then
+                        ' Добавляем столбец A
+                        wsSource.Columns(1).Insert Shift:=xlToRight
+                        wsSource.Cells(1, 1).Value = "Полное наименование медицинской организации"
+                        
+                        ' Копируем данные из 5 столбца (краткое наименование заказчика) в 1 столбец
+                        ' Определяем последнюю строку по столбцу E (5-й столбец)
+                        LastRowSource = wsSource.Cells(wsSource.Rows.Count, 5).End(xlUp).Row
+                        
+                        If LastRowSource >= 2 Then
+                            For r = 2 To LastRowSource
+                                wsSource.Cells(r, 1).Value = wsSource.Cells(r, 5).Value
+                            Next r
+                        End If
+                    End If
+                    
+                    ' Определяем последнюю строку с данными в исходном листе (по 1 столбцу)
+                    LastRowSource = wsSource.Cells(wsSource.Rows.Count, 1).End(xlUp).Row
+                    
+                    ' Если данных нет (только заголовок), пропускаем файл
+                    If LastRowSource > 1 Then
+                        ' Данные начинаются со 2 строки (после заголовка)
+                        ' Заголовок 4 строки, поэтому данные строки 5 и далее
+                        Dim DataStartRow As Long
+                        DataStartRow = 5
+                        
+                        ' Проверяем, что данных достаточно (как минимум строка 5 существует)
+                        If LastRowSource >= DataStartRow Then
+                            ' Копируем данные (строки с 5 по последнюю, все 19 столбцов)
+                            SourceData = wsSource.Range(wsSource.Cells(DataStartRow, 1), wsSource.Cells(LastRowSource, ColCount)).Value
+                            
+                            ' Находим последнюю непустую строку в целевом листе (по всем столбцам)
+                            On Error Resume Next
+                            LastRowTarget = wsTarget.Cells.Find(What:="*", _
+                                After:=wsTarget.Cells(1, 1), _
+                                LookIn:=xlValues, _
+                                LookAt:=xlPart, _
+                                SearchOrder:=xlByRows, _
+                                SearchDirection:=xlPrevious).Row
+                            On Error GoTo 0
+                            
+                            ' Если лист пуст или только шапка, считаем последней строкой 4
+                            If LastRowTarget = 0 Then LastRowTarget = 4
+                            If LastRowTarget < 5 Then LastRowTarget = 4
+                            
+                            ' Определяем строку для вставки (после 4 строки заголовка)
+                            If LastRowTarget <= 4 Then
+                                TargetRow = 5
+                            Else
+                                TargetRow = LastRowTarget + 1
+                            End If
+                            
+                            ' Вставляем значения в целевой лист
+                            wsTarget.Cells(TargetRow, 1).Resize(UBound(SourceData, 1), ColCount).Value = SourceData
+                        End If
+                    End If
+                End If
+                Set wsSource = Nothing
+                
+                ' Закрываем исходную книгу без сохранения
+                SourceWB.Close SaveChanges:=False
+                Set SourceWB = Nothing
+            End If
+        End If
+        ' Переходим к следующему файлу
+        SourceFile = Dir
+    Loop
+    
+    ' Восстанавливаем настройки Excel
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
+    
+    MsgBox "Обработка завершена. Данные добавлены в Лист1.", vbInformation
+End Sub
