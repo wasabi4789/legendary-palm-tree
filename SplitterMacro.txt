@@ -1,0 +1,86 @@
+Скрипт для разбивания на файлы по столбцу
+
+Sub SplitByCompany()
+
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    Dim companyCol As Long
+    Dim company As Variant
+    Dim savePath As String
+    Dim tbl As Range
+    Dim dict As Object
+    Dim key As Variant
+    Dim newWb As Workbook
+    Dim folderPath As String
+    Dim filterRow As Long
+    Dim docPrefix As String
+
+    ' === Настройки ===
+    savePath = "ПУТЬ_ТУТ\"         ' обязательно заверши \ в конце
+    companyCol = 5                 ' столбец компаний
+    filterRow = 1
+    docPrefix = "Префикс_Названия_"
+
+    ' === Основная таблица ===
+    Set ws = ActiveSheet
+    Set tbl = ws.Range("A" & filterRow).CurrentRegion
+    lastRow = tbl.Rows.Count
+
+    ' === Собираем список уникальных компаний ===
+    Set dict = CreateObject("Scripting.Dictionary")
+
+    For i = 2 To lastRow
+        company = ws.Cells(i, companyCol).Value
+        If Not IsEmpty(company) And Not dict.Exists(CStr(company)) Then
+            dict.Add CStr(company), 1
+        End If
+    Next i
+
+    ' === Разбиваем по файлам ===
+    Application.ScreenUpdating = False
+    tbl.AutoFilter
+
+    For Each key In dict.Keys
+
+        company = key
+
+        ' очищаем недопустимые символы
+        company = Replace(company, "\", "_")
+        company = Replace(company, "/", "_")
+        company = Replace(company, ":", "_")
+        company = Replace(company, "*", "_")
+        company = Replace(company, "?", "_")
+        company = Replace(company, """", "_")
+        company = Replace(company, "<", "_")
+        company = Replace(company, ">", "_")
+        company = Replace(company, "|", "_")
+
+        ' === создаём папку для компании ===
+        folderPath = savePath & company & "\"
+        If Dir(folderPath, vbDirectory) = "" Then
+            MkDir folderPath
+        End If
+
+        ' фильтруем
+        tbl.AutoFilter Field:=companyCol, Criteria1:=key
+
+        ' копируем видимые строки
+        ws.Range("A1").CurrentRegion.SpecialCells(xlCellTypeVisible).Copy
+
+        Set newWb = Workbooks.Add
+        newWb.Sheets(1).Range("A1").PasteSpecial xlPasteAll
+
+        ' сохраняем файл
+        newWb.SaveAs Filename:=folderPath & docPrefix & company & ".xlsx", FileFormat:=51
+        newWb.Close False
+
+    Next key
+
+    ws.AutoFilterMode = False
+    Application.CutCopyMode = False
+    Application.ScreenUpdating = True
+
+    MsgBox "Разделение завершено!", vbInformation
+
+End Sub
